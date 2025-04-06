@@ -23,10 +23,15 @@ logger = logging.getLogger(__name__)
 # Constants
 BASE_DIR = Path(__file__).resolve().parent
 DATASET_URL_DIR = BASE_DIR / "dataset_url"
+DATASET_DIR = BASE_DIR / "dataset"  # Main dataset directory
 TIMEOUT = 5  # Timeout for requests in seconds
 MAX_WORKERS = 5  # Number of concurrent downloads
 RETRIES = 2  # Number of retries for failed downloads
 VALID_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp"}
+
+# Define file categorization rules
+NSFW_FILES = ["urls_hentai.txt", "urls_porn.txt"]
+SFW_FILES = ["urls_drawings.txt", "urls_neutral.txt", "urls_sexy.txt"]
 
 def get_file_hash(content: bytes) -> str:
     """Generate a hash for the file content to prevent duplicates"""
@@ -76,11 +81,11 @@ def is_valid_image(file_path: Path) -> bool:
         return False
 
 def download_image(url: str, category: str, file_hashes=None, retry_count=0) -> bool:
-    """Download an image from a URL and save it to the appropriate category folder in dataset_url"""
+    """Download an image from a URL and save it to the appropriate category folder in dataset"""
     try:
         # Create a unique filename
         filename = f"{uuid.uuid4()}.jpg"
-        target_dir = DATASET_URL_DIR / category
+        target_dir = DATASET_DIR / category
         target_dir.mkdir(parents=True, exist_ok=True)
         target_path = target_dir / filename
         
@@ -176,7 +181,7 @@ def main():
     """Main function to download images from URL files"""
     global MAX_WORKERS, TIMEOUT
     
-    parser = argparse.ArgumentParser(description='Download images from URL files to dataset_url folder')
+    parser = argparse.ArgumentParser(description='Download images from URL files to dataset folder')
     parser.add_argument('--limit', type=int, help='Limit the number of images to download per file')
     parser.add_argument('--category', type=str, choices=['nsfw', 'sfw', 'all'], default='all',
                         help='Specify which category to download (nsfw, sfw, or all)')
@@ -194,40 +199,40 @@ def main():
     
     start_time = time.time()
     
-    # Create dataset_url directory if it doesn't exist
+    # Create dataset_url and dataset directories if they don't exist
     DATASET_URL_DIR.mkdir(parents=True, exist_ok=True)
+    DATASET_DIR.mkdir(parents=True, exist_ok=True)
     
     # Scan existing images to prevent duplicates
     file_hashes = None
     if not args.no_duplicate_check:
         logger.info("Scanning existing images to prevent duplicates...")
-        file_hashes = scan_existing_images(DATASET_URL_DIR)
+        file_hashes = scan_existing_images(DATASET_DIR)
         logger.info(f"Found {len(file_hashes)} existing images")
     
     # Find all URL files
     url_files = []
     
-    # Process NSFW files
-    if args.category in ['nsfw', 'all']:
-        nsfw_dir = DATASET_URL_DIR / "nsfw"
-        if nsfw_dir.exists():
-            for file_path in nsfw_dir.glob("*.txt"):
-                url_files.append((file_path, "nsfw"))
-    
-    # Process SFW files
-    if args.category in ['sfw', 'all']:
-        sfw_dir = DATASET_URL_DIR / "sfw"
-        if sfw_dir.exists():
-            for file_path in sfw_dir.glob("*.txt"):
-                url_files.append((file_path, "sfw"))
+    # Process all text files in the dataset_url directory
+    for file_path in DATASET_URL_DIR.glob("*.txt"):
+        file_name = file_path.name
         
-        # Process root directory files (assuming they're SFW if not in a specific folder)
-        for file_path in DATASET_URL_DIR.glob("*.txt"):
-            if file_path.parent == DATASET_URL_DIR:  # Only files directly in dataset_url
-                if "nsfw" in file_path.name.lower() and args.category in ['nsfw', 'all']:
-                    url_files.append((file_path, "nsfw"))
-                elif args.category in ['sfw', 'all']:
-                    url_files.append((file_path, "sfw"))
+        # Determine category based on file name
+        if file_name in NSFW_FILES and args.category in ['nsfw', 'all']:
+            url_files.append((file_path, "nsfw"))
+        elif file_name in SFW_FILES and args.category in ['sfw', 'all']:
+            url_files.append((file_path, "sfw"))
+        # Process files in specific folders
+        elif file_path.parent.name == "nsfw" and args.category in ['nsfw', 'all']:
+            url_files.append((file_path, "nsfw"))
+        elif file_path.parent.name == "sfw" and args.category in ['sfw', 'all']:
+            url_files.append((file_path, "sfw"))
+        # Process root directory files that don't match the predefined lists
+        elif file_path.parent == DATASET_URL_DIR:
+            if "nsfw" in file_path.name.lower() and args.category in ['nsfw', 'all']:
+                url_files.append((file_path, "nsfw"))
+            elif args.category in ['sfw', 'all'] and file_name not in NSFW_FILES:
+                url_files.append((file_path, "sfw"))
     
     if not url_files:
         logger.error(f"No URL files found in {DATASET_URL_DIR} for category '{args.category}'")
